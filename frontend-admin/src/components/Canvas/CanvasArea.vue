@@ -43,6 +43,7 @@ import TableElement from './elements/TableElement.vue'
 import JsBarcode from 'jsbarcode'
 import QRCode from 'qrcode'
 import { ElMessage } from 'element-plus'
+import { calcImageRect, IMAGE_PLACEHOLDER_BG, normalizeFitMode } from '@/utils/imageFit'
 
 const store = useCanvasStore()
 const canvasRef = ref(null)
@@ -208,6 +209,20 @@ const handleDrop = (e) => {
   }
 }
 
+// 导出用的图片解码缓存：同一 dataURL 不重复解码
+const imageDecodeCache = new Map()
+function loadImage(src) {
+  if (imageDecodeCache.has(src)) return imageDecodeCache.get(src)
+  const promise = new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => resolve(null)
+    img.src = src
+  })
+  imageDecodeCache.set(src, promise)
+  return promise
+}
+
 const renderCanvas = async () => {
   await nextTick()
   const canvas = canvasRef.value
@@ -215,14 +230,19 @@ const renderCanvas = async () => {
   const ctx = canvas.getContext('2d')
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
-  
-  for (const el of store.elements) {
-    if (!el.visible) continue
+
+  // 以导出开始时的元件快照为准，避免渲染过程中增删元件导致迭代错乱
+  const snapshot = store.elements.filter(el => el.visible).map(el => el.id)
+  for (const id of snapshot) {
+    // 图片可能仍在加载中，等待结束后读取最新数据，避免丢掉或渲染半成品
+    await store.whenImagesSettled(id)
+    const current = store.elements.find(item => item.id === id)
+    if (!current || !current.visible) continue
     ctx.save()
-    ctx.translate(el.x + el.width / 2, el.y + el.height / 2)
-    if (el.rotation) ctx.rotate((el.rotation * Math.PI) / 180)
-    ctx.translate(-el.width / 2, -el.height / 2)
-    await renderElement(ctx, el)
+    ctx.translate(current.x + current.width / 2, current.y + current.height / 2)
+    if (current.rotation) ctx.rotate((current.rotation * Math.PI) / 180)
+    ctx.translate(-current.width / 2, -current.height / 2)
+    await renderElement(ctx, current)
     ctx.restore()
   }
 }
@@ -251,9 +271,22 @@ const renderElement = async (ctx, el) => {
       break
     case 'image':
       if (el.imageData) {
-        const img = new Image(); img.src = el.imageData
-        await new Promise(r => { img.onload = r; img.onerror = r })
-        ctx.drawImage(img, 0, 0, el.width, el.height)
+        const img = await loadImage(el.imageData)
+        if (img) {
+          // 与画布上的 object-fit 保持同一套计算，导出效果所见即所得
+          const fitMode = normalizeFitMode(el.fitMode)
+          ctx.save()
+          // 铺满裁剪时图片会超出元件框，统一裁剪到框内
+          ctx.beginPath()
+          ctx.rect(0, 0, el.width, el.height)
+          ctx.clip()
+          // 等比适应留出的空白与画布背景一致
+          ctx.fillStyle = IMAGE_PLACEHOLDER_BG
+          ctx.fillRect(0, 0, el.width, el.height)
+          const rect = calcImageRect(img, el.width, el.height, fitMode)
+          ctx.drawImage(img, rect.dx, rect.dy, rect.dw, rect.dh)
+          ctx.restore()
+        }
       }
       break
     case 'barcode':

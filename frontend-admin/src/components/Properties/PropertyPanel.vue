@@ -76,12 +76,33 @@
         <div v-if="element.type === 'image'" class="property-group">
           <div class="group-title">图片属性</div>
           <el-form-item label="图片">
-            <el-upload action="#" :auto-upload="false" :show-file-list="false" accept="image/*" @change="handleImageUpload">
-              <el-button type="primary" size="small">选择图片</el-button>
-            </el-upload>
+            <el-button type="primary" size="small" @click="triggerImagePick">选择图片</el-button>
+            <input
+              ref="imageFileInput"
+              type="file"
+              accept="image/*"
+              class="hidden-file-input"
+              @click="handleImageInputClick"
+              @change="handleImagePicked"
+            />
           </el-form-item>
-          <div v-if="element.imageData" class="image-preview">
-            <img :src="element.imageData" alt="预览" />
+          <el-form-item label="填充方式">
+            <el-select v-model="formData.fitMode" @change="updateProp('fitMode')">
+              <el-option label="等比适应" value="contain" />
+              <el-option label="铺满裁剪" value="cover" />
+              <el-option label="拉伸" value="stretch" />
+            </el-select>
+          </el-form-item>
+          <div v-if="element.imageData" class="image-preview" :class="{ 'is-loading': imageLoading }">
+            <img
+              :src="element.imageData"
+              alt="预览"
+              :style="{ objectFit: formData.fitMode || 'contain', width: '100%', height: '80px' }"
+            />
+            <div v-if="imageLoading" class="preview-loading">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              <span :title="imageLoading.fileName">加载中：{{ imageLoading.fileName }}</span>
+            </div>
           </div>
         </div>
 
@@ -193,9 +214,10 @@
 </template>
 
 <script setup>
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useCanvasStore } from '@/stores/canvas'
 import { ElMessage } from 'element-plus'
+import { DEFAULT_FIT_MODE } from '@/utils/imageFit'
 
 const barcodeFormats = [
   { value: 'CODE128', label: 'Code 128' },
@@ -226,6 +248,7 @@ const formData = reactive({
   x: 0, y: 0, width: 100, height: 40, rotation: 0,
   content: '', fontSize: 14, fontFamily: 'Arial', color: '#000000', bold: false, italic: false,
   fillColor: '#ffffff', strokeColor: '#000000', strokeWidth: 1,
+  fitMode: DEFAULT_FIT_MODE,
   format: 'CODE128', showText: true, errorLevel: 'M',
   rows: 3, cols: 3, borderWidth: 1, borderColor: '#000000',
   cellFontSize: 12, cellFontFamily: 'Arial', cellFontColor: '#000000', cellTextAlign: 'center',
@@ -252,13 +275,29 @@ const updateProp = (key) => {
   }
 }
 
-const handleImageUpload = (file) => {
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    store.updateElement(element.value.id, { imageData: e.target.result })
-    ElMessage.success('图片已上传')
-  }
-  reader.readAsDataURL(file.raw)
+const imageFileInput = ref(null)
+const imageLoading = computed(() =>
+  element.value ? store.imageLoadingMap[element.value.id] : null
+)
+
+const triggerImagePick = () => {
+  imageFileInput.value?.click()
+}
+
+// 清空 input 值，保证重复挑选同一张图片时也会触发 change
+const handleImageInputClick = (e) => {
+  e.target.value = ''
+}
+
+const handleImagePicked = async (e) => {
+  const file = e.target.files[0]
+  // 取消选择时保持原有内容，不回退到上一次的图片
+  if (!file || !element.value) return
+  const result = await store.assignImageFile(element.value.id, file)
+  if (result === 'ok') ElMessage.success('图片已上传')
+  else if (result === 'same') ElMessage.info('与当前图片相同，未更换')
+  else if (result === 'failed') ElMessage.error('图片加载失败')
+  else ElMessage.warning('请选择有效的图片文件')
 }
 
 const getCellText = (row, col) => {
@@ -353,9 +392,35 @@ const remove = () => {
 
 .unit { margin-left: 4px; font-size: 12px; color: #909399; }
 
+.hidden-file-input { display: none; }
+
 .image-preview {
-  margin-top: 8px; padding: 8px; background: #f5f7fa; border-radius: 4px;
-  img { max-width: 100%; max-height: 100px; display: block; margin: 0 auto; }
+  margin-top: 8px;
+  padding: 8px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  position: relative;
+  img { display: block; margin: 0 auto; object-fit: contain; }
+
+  &.is-loading img { opacity: 0.5; }
+}
+
+.preview-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: #409eff;
+  span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .align-buttons {
