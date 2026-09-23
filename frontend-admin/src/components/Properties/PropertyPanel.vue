@@ -75,13 +75,25 @@
         <!-- 图片属性 -->
         <div v-if="element.type === 'image'" class="property-group">
           <div class="group-title">图片属性</div>
+          <el-form-item label="填充方式">
+            <el-select v-model="formData.imageFit" @change="updateProp('imageFit')">
+              <el-option v-for="opt in imageFitOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="图片">
             <el-upload action="#" :auto-upload="false" :show-file-list="false" accept="image/*" @change="handleImageUpload">
-              <el-button type="primary" size="small">选择图片</el-button>
+              <el-button type="primary" size="small">{{ element.imageData ? '更换图片' : '选择图片' }}</el-button>
             </el-upload>
           </el-form-item>
+          <div v-if="imageLoading" class="image-loading">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span :title="imageLoading.name">正在加载：{{ imageLoading.name }}</span>
+          </div>
+          <div v-if="element.imageName" class="image-name" :title="element.imageName">
+            当前图片：{{ element.imageName }}
+          </div>
           <div v-if="element.imageData" class="image-preview">
-            <img :src="element.imageData" alt="预览" />
+            <img :src="element.imageData" :style="{ objectFit: previewFit }" alt="预览" />
           </div>
         </div>
 
@@ -196,6 +208,12 @@
 import { computed, reactive, watch } from 'vue'
 import { useCanvasStore } from '@/stores/canvas'
 import { ElMessage } from 'element-plus'
+import {
+  IMAGE_FIT_OPTIONS,
+  imageLoadingMap,
+  imageFitToCss,
+  loadElementImage
+} from '@/utils/imageLoader'
 
 const barcodeFormats = [
   { value: 'CODE128', label: 'Code 128' },
@@ -216,6 +234,12 @@ const element = computed(() => store.selectedElement)
 const canAlign = computed(() => store.selectedElementIds.length >= 2)
 const fonts = ['Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Verdana', 'Microsoft YaHei', 'SimSun', 'SimHei']
 
+const imageFitOptions = IMAGE_FIT_OPTIONS
+// 属性面板上正在加载的图片元件（慢加载时可辨认是哪一张）
+const imageLoading = computed(() =>
+  element.value ? (imageLoadingMap.get(element.value.id) || null) : null)
+const previewFit = computed(() => imageFitToCss(formData.imageFit))
+
 // 计算最大值限制
 const maxX = computed(() => element.value ? store.canvasPixelWidth - element.value.width : store.canvasPixelWidth)
 const maxY = computed(() => element.value ? store.canvasPixelHeight - element.value.height : store.canvasPixelHeight)
@@ -226,6 +250,7 @@ const formData = reactive({
   x: 0, y: 0, width: 100, height: 40, rotation: 0,
   content: '', fontSize: 14, fontFamily: 'Arial', color: '#000000', bold: false, italic: false,
   fillColor: '#ffffff', strokeColor: '#000000', strokeWidth: 1,
+  imageFit: 'contain',
   format: 'CODE128', showText: true, errorLevel: 'M',
   rows: 3, cols: 3, borderWidth: 1, borderColor: '#000000',
   cellFontSize: 12, cellFontFamily: 'Arial', cellFontColor: '#000000', cellTextAlign: 'center',
@@ -253,12 +278,9 @@ const updateProp = (key) => {
 }
 
 const handleImageUpload = (file) => {
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    store.updateElement(element.value.id, { imageData: e.target.result })
-    ElMessage.success('图片已上传')
-  }
-  reader.readAsDataURL(file.raw)
+  if (!element.value || !file || !file.raw) return
+  // 取消选择不会触发 change；同一张图片、慢加载竞态由加载器统一处理
+  loadElementImage(store, element.value.id, file.raw)
 }
 
 const getCellText = (row, col) => {
@@ -355,7 +377,18 @@ const remove = () => {
 
 .image-preview {
   margin-top: 8px; padding: 8px; background: #f5f7fa; border-radius: 4px;
-  img { max-width: 100%; max-height: 100px; display: block; margin: 0 auto; }
+  img { width: 100%; height: 100px; display: block; margin: 0 auto; }
+}
+
+.image-name {
+  font-size: 11px; color: #909399; margin-top: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.image-loading {
+  margin-top: 6px; display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: #409eff;
+  span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 .align-buttons {

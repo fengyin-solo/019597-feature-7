@@ -1,16 +1,43 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const MM_TO_DOT = 8
+const STORAGE_KEY = 'label-editor-canvas'
+
+// 从 localStorage 恢复画布状态（含图片元件的图片内容、文件名与填充方式）
+function loadPersistedState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    const data = JSON.parse(raw)
+    if (!data || !Array.isArray(data.elements)) return null
+
+    // 兼容旧数据：图片元件没有填充方式时补上默认值
+    data.elements = data.elements.map(el => el.type === 'image'
+      ? { imageFit: 'contain', ...el }
+      : el)
+    return data
+  } catch (err) {
+    console.warn('恢复画布状态失败:', err)
+    return null
+  }
+}
 
 export const useCanvasStore = defineStore('canvas', () => {
-  const canvasWidth = ref(80)
-  const canvasHeight = ref(60)
+  const persisted = loadPersistedState()
+
+  const canvasWidth = ref(persisted?.canvasWidth ?? 80)
+  const canvasHeight = ref(persisted?.canvasHeight ?? 60)
   const scale = ref(1)
-  const elements = ref([])
+  const elements = ref(persisted?.elements ?? [])
   const selectedElementId = ref(null)
   const selectedElementIds = ref([])
-  let elementIdCounter = 0
+  // 保证恢复后新增元件的 id 不与已有元件冲突
+  let elementIdCounter = persisted?.elementIdCounter
+    ?? elements.value.reduce((max, el) => {
+      const n = parseInt(String(el.id).replace(/^\D+/, ''), 10)
+      return Number.isFinite(n) ? Math.max(max, n) : max
+    }, 0)
 
   const canvasPixelWidth = computed(() => canvasWidth.value * MM_TO_DOT)
   const canvasPixelHeight = computed(() => canvasHeight.value * MM_TO_DOT)
@@ -45,6 +72,10 @@ export const useCanvasStore = defineStore('canvas', () => {
       rotation: element.rotation || 0,
       locked: false,
       visible: true
+    }
+    // 图片元件默认“等比适应”，随元件一起保存
+    if (newElement.type === 'image' && !newElement.imageFit) {
+      newElement.imageFit = 'contain'
     }
     elements.value.push(newElement)
     selectElement(id)
@@ -161,6 +192,31 @@ export const useCanvasStore = defineStore('canvas', () => {
     selectedElementId.value = null
     selectedElementIds.value = []
   }
+
+  // 持久化：画布尺寸、元件（含图片内容、文件名、填充方式）变化后写入 localStorage
+  // 刷新页面或切换元件后再选回来，填充方式与图片状态均保留。
+  // 防抖处理：拖拽/缩放时不会高频写入大体积的图片 data URL
+  let saveTimer = null
+  watch(
+    [canvasWidth, canvasHeight, elements],
+    () => {
+      clearTimeout(saveTimer)
+      saveTimer = setTimeout(() => {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            canvasWidth: canvasWidth.value,
+            canvasHeight: canvasHeight.value,
+            elementIdCounter,
+            elements: elements.value
+          }))
+        } catch (err) {
+          // 图片 data URL 体积较大，超出配额时给出明确提示
+          console.warn('保存画布状态失败:', err)
+        }
+      }, 300)
+    },
+    { deep: true }
+  )
 
   return {
     canvasWidth,

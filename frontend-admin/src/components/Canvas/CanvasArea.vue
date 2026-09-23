@@ -43,6 +43,7 @@ import TableElement from './elements/TableElement.vue'
 import JsBarcode from 'jsbarcode'
 import QRCode from 'qrcode'
 import { ElMessage } from 'element-plus'
+import { calcImageDrawRect } from '@/utils/imageLoader'
 
 const store = useCanvasStore()
 const canvasRef = ref(null)
@@ -213,6 +214,8 @@ const renderCanvas = async () => {
   const canvas = canvasRef.value
   if (!canvas) return
   const ctx = canvas.getContext('2d')
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
   
@@ -251,9 +254,29 @@ const renderElement = async (ctx, el) => {
       break
     case 'image':
       if (el.imageData) {
-        const img = new Image(); img.src = el.imageData
-        await new Promise(r => { img.onload = r; img.onerror = r })
-        ctx.drawImage(img, 0, 0, el.width, el.height)
+        const img = new Image()
+        await new Promise((resolve) => {
+          img.onload = resolve
+          img.onerror = resolve
+          img.src = el.imageData
+        })
+        if (img.naturalWidth && img.naturalHeight) {
+          ctx.imageSmoothingEnabled = true
+          ctx.imageSmoothingQuality = 'high'
+          // 按元件保存的填充方式计算绘制矩形，与画布上的 object-fit 效果一致
+          const rect = calcImageDrawRect(
+            img.naturalWidth, img.naturalHeight,
+            el.width, el.height,
+            el.imageFit || 'contain'
+          )
+          if (rect) {
+            ctx.drawImage(
+              img,
+              rect.sx, rect.sy, rect.sw, rect.sh,
+              rect.dx, rect.dy, rect.dw, rect.dh
+            )
+          }
+        }
       }
       break
     case 'barcode':
